@@ -12,7 +12,7 @@ import qualified Aws.Sqs                      as Sqs
 import           Aws.Sqs.Core                 hiding (sqs)
 import           Control.Concurrent
 import           Control.Error
-import           Control.Monad                (forM, forM_, replicateM)
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Resource (runResourceT)
 import           Data.Conduit                 (($$+-))
@@ -70,6 +70,48 @@ pull QueueContext{..} n = do
                 (queueName queueContext)
                 (Just 20)
 
+delete :: MonadIO io
+       => QueueContext
+       -> Sqs.Message
+       -> io (Either QueueError Sqs.DeleteMessageResponse)
+delete QueueContext{..} Sqs.Message{..} = do
+  res <- Aws.simpleAws (aws queueContext) (sqs queueContext) req
+  return (Right res)
+  where req = Sqs.DeleteMessage mReceiptHandle (queueName queueContext)
+
+doWork ctx = do
+  eitherMessages <- pull ctx 10
+
+  case eitherMessages of
+    Left err ->
+      case err of
+        QueueEmpty -> do
+          putStrLn "Waiting for more work..."
+          threadDelay 10000000
+          doWork ctx
+
+        _ ->
+          putStrLn ("Error: " <> show err)
+
+    Right messages ->
+      forM_ messages $ \message -> do
+        status <- work message
+        case status of
+          WorkSuccess -> void (delete ctx message)
+          WorkError err -> T.putStrLn ("Error: " <> err)
+
+  doWork ctx
+
+data WorkStatus
+  = WorkSuccess
+  | WorkError T.Text
+    deriving (Show, Eq)
+
+work Sqs.Message{..} = do
+  if (T.take 4 mBody == T.pack "fail")
+    then return (WorkError ("Fail! Message Body: " <> mBody))
+    else T.putStrLn mBody >> return WorkSuccess
+
 go :: IO ()
 go = do
   cfg <- Aws.baseConfiguration
@@ -79,5 +121,4 @@ go = do
   let sqsQueueName = Sqs.QueueName "test-queue" "632433445472"
   let ctx = QueueContext (SQSContext cfg sqscfg sqsQueueName) manager
 
-  res <- pull ctx 1
-  print res
+  doWork ctx
