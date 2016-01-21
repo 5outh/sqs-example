@@ -2,7 +2,6 @@ module Main where
 
 import           Lib
 
--- This wont work you know
--- You're going down the wrong road you know
+-- (Fake queue metadata)
 main :: IO ()
 main = go "test-queue" "3894739874374"
