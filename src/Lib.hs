@@ -40,10 +40,10 @@ pull n = do
                 []
                 (Just n)
                 []
-                (queueName (queueContext ctx))
+                (queueName ctx)
                 (Just 20)
   Sqs.ReceiveMessageResponse msgs <-
-    Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+    Aws.simpleAws (aws ctx) (sqs ctx) req
   return (case msgs of
     [] -> Left QueueEmpty
     _ -> Right msgs)
@@ -53,21 +53,20 @@ delete :: MonadIO io
        -> QueueM io Sqs.DeleteMessageResponse
 delete Sqs.Message{..} = do
   ctx <- ask
-  let req = Sqs.DeleteMessage mReceiptHandle (queueName (queueContext ctx))
-  res <- Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+  let req = Sqs.DeleteMessage mReceiptHandle (queueName ctx)
+  res <- Aws.simpleAws (aws ctx) (sqs ctx) req
   return (Right res)
-
 
 push :: MonadIO io
      => T.Text
      -> QueueM io Sqs.SendMessageResponse
 push message = do
   ctx <- ask
-  let req = Sqs.SendMessage message (queueName (queueContext ctx)) [] Nothing
-  res <- Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+  let req = Sqs.SendMessage message (queueName ctx) [] Nothing
+  res <- Aws.simpleAws (aws ctx) (sqs ctx) req
   return (Right res)
 
-doWork :: ReaderT QueueContext IO ()
+doWork :: ReaderT SQSContext IO ()
 doWork = do
   ctx <- ask
   eitherMessages <- pull 10
@@ -107,10 +106,9 @@ work Sqs.Message{..} =
 go :: T.Text -> T.Text -> IO ()
 go queue amazonId = do
   cfg <- Aws.baseConfiguration
-  manager <- newManager tlsManagerSettings
 
   let sqscfg = Sqs.sqs Aws.Core.HTTP sqsEndpointUsEast False :: Sqs.SqsConfiguration Aws.NormalQuery
   let sqsQueueName = Sqs.QueueName "test-queue" "632433445472"
-  let ctx = QueueContext (SQSContext cfg sqscfg sqsQueueName) manager
+  let ctx = SQSContext cfg sqscfg sqsQueueName
 
   runReaderT doWork ctx

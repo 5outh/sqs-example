@@ -10,17 +10,12 @@ import           Control.Monad.Trans.Reader
 import qualified Data.Text                  as T
 import           Network.HTTP.Conduit
 
-type QueueM io a = ReaderT QueueContext io (Either QueueError a)
+type QueueM io a = ReaderT SQSContext io (Either QueueError a)
 
 data SQSContext = SQSContext
   { aws       :: Aws.Configuration
   , sqs       :: Sqs.SqsConfiguration Aws.NormalQuery
   , queueName :: Sqs.QueueName
-  }
-
-data QueueContext = QueueContext
-  { queueContext :: SQSContext -- TODO: Pull away
-  , manager      :: Manager -- TODO: Is this always necessary?
   }
 
 data QueueError
