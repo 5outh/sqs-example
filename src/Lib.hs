@@ -72,15 +72,14 @@ doWork = do
   eitherMessages <- pull 10
 
   case eitherMessages of
-    Left err ->
+    Left err -> liftIO $
       case err of
         QueueEmpty -> do
-          liftIO (putStrLn "Waiting for more work...")
-          liftIO (threadDelay 10000000)
-          doWork
+          putStrLn "Waiting for more work..."
+          threadDelay 10000000
 
         _ ->
-          liftIO (putStrLn ("Error: " <> show err))
+          putStrLn ("Error: " <> show err)
 
     Right messages ->
       forM_ messages $ \message -> do
