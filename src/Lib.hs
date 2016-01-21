@@ -14,6 +14,7 @@ import           Control.Concurrent
 import           Control.Error
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Reader
 import           Control.Monad.Trans.Resource (runResourceT)
 import           Data.Conduit                 (($$+-))
 import           Data.Conduit.Binary          (sinkFile)
@@ -39,8 +40,8 @@ data SQSContext = SQSContext
   }
 
 data QueueContext = QueueContext
-  { queueContext :: SQSContext
-  , manager      :: Manager
+  { queueContext :: SQSContext -- TODO: Pull away
+  , manager      :: Manager -- TODO: Is this always necessary?
   }
 
 data QueueError
@@ -52,63 +53,82 @@ data PullRequest = PullRequest
   { maxMessages :: Int
   } deriving (Show, Eq)
 
-pull :: MonadIO io
-     => QueueContext
-     -> Int
-     -> io (Either QueueError [Sqs.Message])
-pull QueueContext{..} n = do
-  Sqs.ReceiveMessageResponse msgs <-
-    Aws.simpleAws (aws queueContext) (sqs queueContext) req
-  return (case msgs of
-    [] -> Left QueueEmpty
-    _ -> Right msgs)
-  where req = Sqs.ReceiveMessage
-                Nothing
-                []
-                (Just n)
-                []
-                (queueName queueContext)
-                (Just 20)
-
-delete :: MonadIO io
-       => QueueContext
-       -> Sqs.Message
-       -> io (Either QueueError Sqs.DeleteMessageResponse)
-delete QueueContext{..} Sqs.Message{..} = do
-  res <- Aws.simpleAws (aws queueContext) (sqs queueContext) req
-  return (Right res)
-  where req = Sqs.DeleteMessage mReceiptHandle (queueName queueContext)
-
-doWork ctx = do
-  eitherMessages <- pull ctx 10
-
-  case eitherMessages of
-    Left err ->
-      case err of
-        QueueEmpty -> do
-          putStrLn "Waiting for more work..."
-          threadDelay 10000000
-          doWork ctx
-
-        _ ->
-          putStrLn ("Error: " <> show err)
-
-    Right messages ->
-      forM_ messages $ \message -> do
-        status <- work message
-        case status of
-          WorkSuccess -> void (delete ctx message)
-          WorkError err -> T.putStrLn ("Error: " <> err)
-
-  doWork ctx
-
 data WorkStatus
   = WorkSuccess
   | WorkError T.Text
     deriving (Show, Eq)
 
-work Sqs.Message{..} = do
-  if (T.take 4 mBody == T.pack "fail")
+pull :: MonadIO io
+     => Int
+     -> ReaderT QueueContext io (Either QueueError [Sqs.Message])
+pull n = do
+  ctx <- ask
+  let req = Sqs.ReceiveMessage
+                Nothing
+                []
+                (Just n)
+                []
+                (queueName (queueContext ctx))
+                (Just 20)
+  Sqs.ReceiveMessageResponse msgs <-
+    Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+  return (case msgs of
+    [] -> Left QueueEmpty
+    _ -> Right msgs)
+
+delete :: MonadIO io
+       => Sqs.Message
+       -> ReaderT QueueContext io (Either QueueError Sqs.DeleteMessageResponse)
+delete Sqs.Message{..} = do
+  ctx <- ask
+  let req = Sqs.DeleteMessage mReceiptHandle (queueName (queueContext ctx))
+  res <- Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+  return (Right res)
+
+
+push :: MonadIO io
+     => T.Text
+     -> ReaderT QueueContext io (Either QueueError Sqs.SendMessageResponse)
+push message = do
+  ctx <- ask
+  let req = Sqs.SendMessage message (queueName (queueContext ctx)) [] Nothing
+  res <- Aws.simpleAws (aws (queueContext ctx)) (sqs (queueContext ctx)) req
+  return (Right res)
+
+doWork :: ReaderT QueueContext IO ()
+doWork = do
+  ctx <- ask
+  eitherMessages <- pull 10
+
+  case eitherMessages of
+    Left err ->
+      case err of
+        QueueEmpty -> do
+          liftIO (putStrLn "Waiting for more work...")
+          liftIO (threadDelay 10000000)
+          doWork
+
+        _ ->
+          liftIO (putStrLn ("Error: " <> show err))
+
+    Right messages ->
+      forM_ messages $ \message -> do
+        status <- liftIO (work message)
+        case status of
+          WorkSuccess -> do
+            delete message
+            let newMessage msg
+                  | T.length msg < 100 = "new" <> msg
+                  | otherwise = "reset"
+            push (newMessage (Sqs.mBody message))
+            return ()
+          WorkError err -> liftIO (T.putStrLn ("Error: " <> err))
+
+  doWork
+
+work :: Sqs.Message -> IO WorkStatus
+work Sqs.Message{..} =
+  if T.take 4 mBody == "fail"
     then return (WorkError ("Fail! Message Body: " <> mBody))
     else T.putStrLn mBody >> return WorkSuccess
 
@@ -121,4 +141,4 @@ go = do
   let sqsQueueName = Sqs.QueueName "test-queue" "632433445472"
   let ctx = QueueContext (SQSContext cfg sqscfg sqsQueueName) manager
 
-  doWork ctx
+  runReaderT doWork ctx
