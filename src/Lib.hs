@@ -132,8 +132,8 @@ work Sqs.Message{..} =
     then return (WorkError ("Fail! Message Body: " <> mBody))
     else T.putStrLn mBody >> return WorkSuccess
 
-go :: IO ()
-go = do
+go :: T.Text -> T.Text -> IO ()
+go queue amazonId = do
   cfg <- Aws.baseConfiguration
   manager <- newManager tlsManagerSettings
 
