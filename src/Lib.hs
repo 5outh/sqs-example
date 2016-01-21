@@ -7,23 +7,20 @@ module Lib
 
 import qualified Aws
 import qualified Aws.Core
-import qualified Aws.S3                       as S3
-import qualified Aws.Sqs                      as Sqs
-import           Aws.Sqs.Core                 hiding (sqs)
+import qualified Aws.S3                     as S3
+import qualified Aws.Sqs                    as Sqs
+import           Aws.Sqs.Core               hiding (sqs)
 import           Control.Concurrent
 import           Control.Error
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Reader
-import           Control.Monad.Trans.Resource (runResourceT)
-import           Data.Conduit                 (($$+-))
-import           Data.Conduit.Binary          (sinkFile)
 import           Data.Monoid
-import           Data.String
-import qualified Data.Text                    as T
-import qualified Data.Text.IO                 as T
-import qualified Data.Text.Read               as TR
+import qualified Data.Text                  as T
+import qualified Data.Text.IO               as T
+import qualified Data.Text.Read             as TR
 import           Network.HTTP.Conduit
+import           Types
 
 sqsEndpointUsEast :: Endpoint
 sqsEndpointUsEast
@@ -33,34 +30,9 @@ sqsEndpointUsEast
       , endpointAllowedLocationConstraints = ["us-east-1"]
       }
 
-data SQSContext = SQSContext
-  { aws       :: Aws.Configuration
-  , sqs       :: Sqs.SqsConfiguration Aws.NormalQuery
-  , queueName :: Sqs.QueueName
-  }
-
-data QueueContext = QueueContext
-  { queueContext :: SQSContext -- TODO: Pull away
-  , manager      :: Manager -- TODO: Is this always necessary?
-  }
-
-data QueueError
-  = QueueEmpty
-  | GenericFailure
-    deriving (Show, Eq)
-
-data PullRequest = PullRequest
-  { maxMessages :: Int
-  } deriving (Show, Eq)
-
-data WorkStatus
-  = WorkSuccess
-  | WorkError T.Text
-    deriving (Show, Eq)
-
 pull :: MonadIO io
      => Int
-     -> ReaderT QueueContext io (Either QueueError [Sqs.Message])
+     -> QueueM io [Sqs.Message]
 pull n = do
   ctx <- ask
   let req = Sqs.ReceiveMessage
@@ -78,7 +50,7 @@ pull n = do
 
 delete :: MonadIO io
        => Sqs.Message
-       -> ReaderT QueueContext io (Either QueueError Sqs.DeleteMessageResponse)
+       -> QueueM io Sqs.DeleteMessageResponse
 delete Sqs.Message{..} = do
   ctx <- ask
   let req = Sqs.DeleteMessage mReceiptHandle (queueName (queueContext ctx))
@@ -88,7 +60,7 @@ delete Sqs.Message{..} = do
 
 push :: MonadIO io
      => T.Text
-     -> ReaderT QueueContext io (Either QueueError Sqs.SendMessageResponse)
+     -> QueueM io Sqs.SendMessageResponse
 push message = do
   ctx <- ask
   let req = Sqs.SendMessage message (queueName (queueContext ctx)) [] Nothing
