@@ -107,7 +107,7 @@ go queue amazonId = do
   cfg <- Aws.baseConfiguration
 
   let sqscfg = Sqs.sqs Aws.Core.HTTP sqsEndpointUsEast False :: Sqs.SqsConfiguration Aws.NormalQuery
-  let sqsQueueName = Sqs.QueueName "test-queue" "632433445472"
+  let sqsQueueName = Sqs.QueueName queue amazonId
   let ctx = SQSContext cfg sqscfg sqsQueueName
 
   runReaderT doWork ctx
